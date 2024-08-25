@@ -95,11 +95,15 @@ int rollStopSpeed = 90; //value to stop the roll motor - keep this at 90
 int yawPrecision = 150; // this variable represents the time in milliseconds that the YAW motor will remain at it's set movement speed. Try values between 50 and 500 to start (500 milliseconds = 1/2 second)
 int rollPrecision = 158; // this variable represents the time in milliseconds that the ROLL motor with remain at it's set movement speed. If this ROLL motor is spinning more or less than 1/6th of a rotation when firing a single dart (one call of the fire(); command) you can try adjusting this value down or up slightly, but it should remain around the stock value (160ish) for best results.
 
-int pitchMax = 130; // this sets the maximum angle of the pitch servo to prevent it from crashing, it should remain below 180, and be greater than the pitchMin
-int pitchMin = 30; // this sets the minimum angle of the pitch servo to prevent it from crashing, it should remain above 0, and be less than the pitchMax
+int pitchMax = 160; // this sets the maximum angle of the pitch servo to prevent it from crashing, it should remain below 180, and be greater than the pitchMin
+int pitchMin = 20; // this sets the minimum angle of the pitch servo to prevent it from crashing, it should remain above 0, and be less than the pitchMax
 
-float pitchPID_K = .3;
-float pitchPID_I = .2;
+//PID tuning
+float pitchPID_K = 0.2;
+float pitchPID_I = 0.0005;
+
+
+long pitchErrorIntegral = 0; // this is the error accumulator for the I term. It's global so that it can be reset when the target position changes
 
 //////////////////////////////////////////////////
               //  S E T U P  //
@@ -358,6 +362,7 @@ int getImuPitch(){
 
 void updateTargetPitch(){
   pitchTarget = pitchServoVal;
+  pitchErrorIntegral = 0;
 }
 
 int getEstimatedPitch(){
@@ -366,23 +371,33 @@ int getEstimatedPitch(){
 }
 
 int computePitchPID(){ // This is a position controller
+  const int Imax = 5; //contrain I correction to this many degrees
+  int dT = calcTimeDiff();
 
   //Get error term
   int pitchEstimated = getEstimatedPitch();
   int pitchError = pitchTarget - pitchEstimated;
   
-  //Calculate P Corrections
+  //Calculate P term
   int pitchPCorrection = pitchError * pitchPID_K;
   
+  //Calculate I term
+  pitchErrorIntegral += pitchError * dT; //dT is in milliseconds. Less floats to take up RAM and slow math, but makes I coeff 1/1000 of expected.
+  int pitchICorrection = constrain(pitchErrorIntegral * pitchPID_I, -Imax, Imax);
+  pitchErrorIntegral *= .5; //leaky I term to prevent windup
+  
   //Accumulate corrections
-  int pitchOutput = pitchServoVal + pitchPCorrection;
+  int pitchOutput = pitchServoVal + pitchPCorrection + pitchICorrection;
 
   if (DEBUG){
-    Serial.print(" Target: "); Serial.print(pitchTarget);
-    Serial.print(" Estimated: "); Serial.print(pitchEstimated);
-    Serial.print(" Error: "); Serial.print(pitchError);
-    Serial.print(" Correction: "); Serial.print(pitchPCorrection);
-    Serial.print(" Output: "); Serial.print(pitchOutput);
+    Serial.print(" dT: "); Serial.print(dT);
+    Serial.print("\tTarget: "); Serial.print(pitchTarget);
+    Serial.print("\tEstimated: "); Serial.print(pitchEstimated);
+    Serial.print("\tError: "); Serial.print(pitchError);
+    Serial.print("\tP term: "); Serial.print(pitchPCorrection);
+    Serial.print("\tI int: "); Serial.print(pitchErrorIntegral);
+    Serial.print("\tI term: "); Serial.print(pitchICorrection);
+    Serial.print("\tOutput: "); Serial.print(pitchOutput);
     Serial.println();
   }
   return pitchOutput;
@@ -391,9 +406,14 @@ int computePitchPID(){ // This is a position controller
 void movePitchPID(){
   int newPitch = computePitchPID();
   pitchServoVal = constrain(newPitch, pitchMin, pitchMax);
-  if (!DEBUG){
-    pitchServo.write(pitchServoVal);
-    delay(50);
-  }
+  pitchServo.write(pitchServoVal);
+  delay(50);
 }
 
+int calcTimeDiff(){
+  static unsigned long tic = 0;
+  static unsigned long toc = 0;
+  tic = toc;
+  toc = millis();
+  return toc - tic;
+}
