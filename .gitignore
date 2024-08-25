@@ -1,0 +1,9 @@
+#macOS Finder junk
+*.DS_Store
+
+#Arduino avrdude outputs
+*.hex
+*.eep
+*.elf
+*.bin
+
